@@ -212,7 +212,7 @@ module RestClient
     def execute & block
       # With 2.0.0+, net/http accepts URI objects in requests and handles wrapping
       # IPv6 addresses in [] for use in the Host request header.
-      transmit uri, net_http_request_class(method).new(uri, processed_headers), payload, & block
+      transmit uri, net_http_request_class(method).new(sanitize_uri(uri), processed_headers), payload, & block
     ensure
       payload.close if payload
     end
@@ -251,6 +251,7 @@ module RestClient
     #
     def process_url_params(url, headers)
       url_params = nil
+
 
       # find and extract/remove "params" key if the value is a Hash/ParamsArray
       headers.delete_if do |key, value|
@@ -471,19 +472,38 @@ module RestClient
       end
     end
 
+    def socket_uri
+      if defined?(@socket)
+        if @socket
+          @socket
+        else
+          false
+        end
+      elsif RestClient.socket_set?
+        if RestClient.socket
+          RestClient.socket
+        else
+          false
+        end
+      else
+        nil
+      end
+    end
+
     def net_http_object(hostname, port)
       p_uri = proxy_uri
+      s_uri = socket_uri
 
-      if p_uri.nil?
-        # no proxy set
-        Net::HTTP.new(hostname, port)
+      if p_uri
+        Net::HTTP.new(hostname, port,
+                      p_uri.hostname, p_uri.port, p_uri.user, p_uri.password)
+      elsif s_uri
+        NetX::HTTPUnix.new(s_uri)
       elsif !p_uri
         # proxy explicitly set to none
         Net::HTTP.new(hostname, port, nil, nil, nil, nil)
       else
-        Net::HTTP.new(hostname, port,
-                      p_uri.hostname, p_uri.port, p_uri.user, p_uri.password)
-
+        Net::HTTP.new(hostname, port)
       end
     end
 
@@ -500,6 +520,8 @@ module RestClient
       end
     end
 
+    UNIX_REGEXP = %r{(?<socket>^unix:///.+\.sock)}i
+
     # Normalize a URL by adding a protocol if none is present.
     #
     # If the string has no HTTP-like scheme (i.e. scheme followed by '//'), a
@@ -512,6 +534,10 @@ module RestClient
     #
     def normalize_url(url)
       url = 'http://' + url unless url.match(%r{\A[a-z][a-z0-9+.-]*://}i)
+      url.match(UNIX_REGEXP) do |m|
+        RestClient.socket = m[:socket]
+        url.sub!(/^#{RestClient.socket}/, '')
+      end
       url
     end
 
@@ -634,6 +660,14 @@ module RestClient
 
     private
 
+    def sanitize_uri(uri)
+      if RestClient.socket_set?
+        uri.to_s
+      else
+        uri
+      end
+    end
+
     # Parse the `@url` string into a URI object and save it as
     # `@uri`. Also save any basic auth user or password as @user and @password.
     # If no auth info was passed, check for credentials in a Netrc file.
@@ -647,7 +681,7 @@ module RestClient
     def parse_url_with_auth!(url)
       uri = URI.parse(url)
 
-      if uri.hostname.nil?
+      if uri.hostname.nil? && !RestClient.socket_set?
         raise URI::InvalidURIError.new("bad URI(no host provided): #{url}")
       end
 

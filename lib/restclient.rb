@@ -1,4 +1,4 @@
-require 'net/http'
+require 'net_http_unix'
 require 'openssl'
 require 'stringio'
 require 'uri'
@@ -109,6 +109,19 @@ module RestClient
   #
   def self.proxy_set?
     @proxy_set ||= false
+  end
+
+  def self.socket
+    @socket ||= nil
+  end
+
+  def self.socket=(value)
+    @socket = value
+    @socket_set = true
+  end
+
+  def self.socket_set?
+    @socket_set ||= false
   end
 
   # Setup the log for RestClient calls.
